@@ -103,7 +103,7 @@ class Node:
             return f"Forwarding failed: {e}", 500
         finally:
             conn.close()
-
+ 
 class ServerHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, node_instance=None, **kwargs):
         self.node_instance = node_instance
