@@ -53,6 +53,8 @@ class Node:
 
     def put_value(self, key, value):
         hashed_key = self.hashing(key)
+        print(f"hashed_key: {hashed_key}, I am {self.node_id} port {self.node_port}, pred {self.pred.split(':')}, succ {self.succ.split(':')}")
+        #print(f"finger_table: {self.finger_table}")
         print(f"PUT port{self.node_port}: {key}: {value} is responsible {self.is_responsible(hashed_key)}")
         if self.is_responsible(hashed_key):
             self.key_val[key] = value
@@ -63,6 +65,7 @@ class Node:
     def is_responsible(self, hashed_key):
         if self.hashing(self.pred) == self.node_id: # single node only
             return True
+        print(f"{self.hashing(self.pred)} < {hashed_key} <= {self.node_id}, {self.hashing(self.pred) < hashed_key <= self.node_id} ")
         return self.hashing(self.pred) < hashed_key <= self.node_id
     
     def find_forward_address(self, hashed_key):
@@ -77,9 +80,10 @@ class Node:
         return self.finger_table[0]
     
     def forward(self, key, url, method="GET", data=None):
+        print(f"Forwarding to {self.succ.split(":")}")
         forward_host, forward_port = self.succ.split(":") #self.find_forward_address(self.hashing(key)).split(":")
         conn = http.client.HTTPConnection(forward_host, int(forward_port))
-        print(f"Forwarding to {forward_host}:{forward_port}")
+        #print(f"Forwarding to {forward_host}:{forward_port}")
         try:
             if method == "GET":
                 conn.request("GET", url)
@@ -95,45 +99,43 @@ class Node:
             conn.close()
 
 class ServerHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, node_instance=None, **kwargs):
+        self.node_instance = node_instance
+        super().__init__(*args, **kwargs)
+
     def do_GET(self):
         if self.path == '/helloworld':
-            response = f"{node_instance.node_name}:{node_instance.node_port}"
-            
+            response = f"{self.node_instance.node_name}:{self.node_instance.node_port}"
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
             self.wfile.write(response.encode())
         elif self.path.startswith('/storage/'):
             key = self.path[len('/storage/'):]
-            response, status = node_instance.get_value(key)
-            
+            response, status = self.node_instance.get_value(key)
             self.send_response(status)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
             self.wfile.write(response.encode())
-            
         elif self.path == '/network':
             response = json.dumps(list(set([
-                str(node_instance.succ),
-                str(node_instance.pred),
-            ] + [str(n) for n in node_instance.finger_table])))
-            
+                str(self.node_instance.succ),
+                str(self.node_instance.pred),
+            ] + [str(n) for n in self.node_instance.finger_table])))
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
             self.wfile.write(response.encode())
-        
         elif self.path == '/node':
             response = json.dumps({
-                "node_name": node_instance.node_name,
-                "node_port": node_instance.node_port,
-                "successor": node_instance.succ,
-                "predecessor": node_instance.pred,
-                "finger_table": node_instance.finger_table,
-                "key_value_store": node_instance.key_val,
-                "node_id": node_instance.node_id
+                "node_name": self.node_instance.node_name,
+                "node_port": self.node_instance.node_port,
+                "successor": self.node_instance.succ,
+                "predecessor": self.node_instance.pred,
+                "finger_table": self.node_instance.finger_table,
+                "key_value_store": self.node_instance.key_val,
+                "node_id": self.node_instance.node_id
             })
-            
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
@@ -143,13 +145,13 @@ class ServerHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-type", "text/plain")
             self.end_headers()
             self.wfile.write("Not found".encode())
-            
+
     def do_PUT(self):
         if self.path.startswith('/storage/'):
             key = self.path[len('/storage/'):]
-            value = self.rfile.read().decode('utf-8')
-            response, status = node_instance.put_value(key, value)
-            
+            content_length = int(self.headers['Content-Length'])
+            value = self.rfile.read(content_length).decode('utf-8')
+            response, status = self.node_instance.put_value(key, value)
             self.send_response(status)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
@@ -161,38 +163,46 @@ class ServerHandler(SimpleHTTPRequestHandler):
             self.wfile.write("Not found".encode())
 
 def main():
-    global node_instance
-    #if len(sys.argv) < 4:
-    #    print("Usage: python3 server.py <node_name> <port> <initialization_list>")
-    #    sys.exit(1)
+    if len(sys.argv) < 4:
+        print("Usage: python3 server.py <node_name> <port> <initialization_list>")
+        #sys.exit(1)
     
-    #node_name = sys.argv[1]
-    #node_port = int(sys.argv[2])
-    #initialization_list = sys.argv[3].split(',')
+    try:
+        node_name = sys.argv[1]
+        node_port = int(sys.argv[2])
+        initialization_list = sys.argv[3].split(',')
+        if not initialization_list or len(initialization_list) < 1:
+            print("Initialization list must have at least one element.")
+            #sys.exit(1)
+    except Exception as e:
+        print(f"no args")
     
-    #if not initialization_list or len(initialization_list) < 1:
-    #    print("Initialization list must have at least one element.")
-    #    sys.exit(1)
+    import threading
+
+    def run_server(port, node_instance):
+        httpd = HTTPServer(("localhost", port), lambda *args, **kwargs: ServerHandler(*args, node_instance=node_instance, **kwargs))
+        httpd.serve_forever()
     
-    #node_instance = Node(node_name, node_port, initialization_list)
 
     def run_app():
-        global node_instance
-        node_instance = Node("localhost", 65123, ["localhost:65123", "localhost:65124", "localhost:65125"])
-        node_instance = Node("localhost", 65124, ["localhost:65123", "localhost:65124", "localhost:65125"])
-        node_instance = Node("localhost", 65125, ["localhost:65123", "localhost:65124", "localhost:65125"])
-        #httpd = HTTPServer((node_name, node_port), ServerHandler)
-        httpd = HTTPServer(("localhost", 65123), ServerHandler)
-        httpd.serve_forever()
+        # start local server
+        node_instance1 = Node("localhost", 65123, ["localhost:65123", "localhost:65124", "localhost:65125"])
+        node_instance2 = Node("localhost", 65124, ["localhost:65123", "localhost:65124", "localhost:65125"])
+        node_instance3 = Node("localhost", 65125, ["localhost:65123", "localhost:65124", "localhost:65125"])
+        threading.Thread(target=run_server, args=(65123, node_instance1)).start()
+        print("started 1")
+        threading.Thread(target=run_server, args=(65124, node_instance2)).start()
+        print("started 2")
+        threading.Thread(target=run_server, args=(65125, node_instance3)).start()
+        print("started 3")
         
-        httpd1 = HTTPServer(("localhost", 65124), ServerHandler)
-        httpd1.serve_forever()
-
-        httpd2 = HTTPServer(("localhost", 65125), ServerHandler)
-        httpd2.serve_forever()
+        # start it on cluster   
+        #node_instance = Node(node_name, node_port, initialization_list) 
+        #httpd = HTTPServer(("localhost", node_port), lambda *args, **kwargs: ServerHandler(*args, node_instance=node_instance, **kwargs))
+        #httpd.serve_forever()
 
     threading.Thread(target=run_app).start()
-    threading.Timer(600, lambda: os._exit(0)).start()  # Shutdown after 5 minutes
+    threading.Timer(600, lambda: os._exit(0)).start()  # Shutdown after 10 minutes
 
 if __name__ == '__main__':
     main()
