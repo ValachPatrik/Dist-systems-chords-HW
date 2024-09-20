@@ -63,10 +63,16 @@ class Node:
             return self.forward(key, f"/storage/{key}", method="PUT", data=value)
 
     def is_responsible(self, hashed_key):
-        if self.hashing(self.pred) == self.node_id: # single node only
-            return True
         print(f"{self.hashing(self.pred)} < {hashed_key} <= {self.node_id}, {self.hashing(self.pred) < hashed_key <= self.node_id} ")
-        return self.hashing(self.pred) < hashed_key <= self.node_id
+        pred_id = self.hashing(self.pred)
+        if pred_id == self.node_id:  # single node only
+            return True
+        if pred_id < self.node_id:
+            # Normal case: predecessor is less than current node ID
+            return pred_id < hashed_key <= self.node_id
+        else:
+            # Wrap-around case: predecessor is greater than current node ID
+            return pred_id < hashed_key or hashed_key <= self.node_id
     
     def find_forward_address(self, hashed_key):
         if self.hashing(self.finger_table[0]) == hashed_key:
@@ -81,7 +87,7 @@ class Node:
     
     def forward(self, key, url, method="GET", data=None):
         print(f"Forwarding to {self.succ.split(":")}")
-        forward_host, forward_port = self.succ.split(":") #self.find_forward_address(self.hashing(key)).split(":")
+        forward_host, forward_port = self.find_forward_address(self.hashing(key)).split(":")
         conn = http.client.HTTPConnection(forward_host, int(forward_port))
         #print(f"Forwarding to {forward_host}:{forward_port}")
         try:
@@ -186,20 +192,21 @@ def main():
 
     def run_app():
         # start local server
-        node_instance1 = Node("localhost", 65123, ["localhost:65123", "localhost:65124", "localhost:65125"])
-        node_instance2 = Node("localhost", 65124, ["localhost:65123", "localhost:65124", "localhost:65125"])
-        node_instance3 = Node("localhost", 65125, ["localhost:65123", "localhost:65124", "localhost:65125"])
-        threading.Thread(target=run_server, args=(65123, node_instance1)).start()
-        print("started 1")
-        threading.Thread(target=run_server, args=(65124, node_instance2)).start()
-        print("started 2")
-        threading.Thread(target=run_server, args=(65125, node_instance3)).start()
-        print("started 3")
-        
-        # start it on cluster   
-        #node_instance = Node(node_name, node_port, initialization_list) 
-        #httpd = HTTPServer(("localhost", node_port), lambda *args, **kwargs: ServerHandler(*args, node_instance=node_instance, **kwargs))
-        #httpd.serve_forever()
+        if False:
+            node_instance1 = Node("localhost", 65123, ["localhost:65123", "localhost:65124", "localhost:65125"])
+            node_instance2 = Node("localhost", 65124, ["localhost:65123", "localhost:65124", "localhost:65125"])
+            node_instance3 = Node("localhost", 65125, ["localhost:65123", "localhost:65124", "localhost:65125"])
+            threading.Thread(target=run_server, args=(65123, node_instance1)).start()
+            print("started 1")
+            threading.Thread(target=run_server, args=(65124, node_instance2)).start()
+            print("started 2")
+            threading.Thread(target=run_server, args=(65125, node_instance3)).start()
+            print("started 3")
+        if True:
+            # start it on cluster   
+            node_instance = Node(node_name, node_port, initialization_list) 
+            httpd = HTTPServer((node_name, node_port), lambda *args, **kwargs: ServerHandler(*args, node_instance=node_instance, **kwargs))
+            httpd.serve_forever()
 
     threading.Thread(target=run_app).start()
     threading.Timer(600, lambda: os._exit(0)).start()  # Shutdown after 10 minutes
