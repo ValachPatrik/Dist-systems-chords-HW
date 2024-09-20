@@ -170,6 +170,7 @@ def simple_check(nodes):
 
         if status in range(200,300) and returned == value:
             successes+=1
+            print(f"PUT/GET to {node} {successes} {value} {returned}: SUCCESS")
         elif not contenttype.startswith("text/plain"):
             print("PUT/GET to {}: UNEXPECTED CONTENT TYPE: {}".format(node, contenttype))
         elif status in range(200,300) and returned != value:
