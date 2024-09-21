@@ -157,6 +157,7 @@ def simple_check(nodes):
         node_index = (node_index+1) % len(nodes)
 
         try:
+            print(f"PUTING {node}")
             put_value(node, key, value)
         except Exception as e:
             print("PUT/GET to {}: EXCEPTION DURING PUT: {}".format(node, e))
@@ -170,7 +171,7 @@ def simple_check(nodes):
 
         if status in range(200,300) and returned == value:
             successes+=1
-            print(f"PUT/GET to {node} {successes} {value} {returned}: SUCCESS")
+            print(f"PUT/GET to {node} {successes}: SUCCESS")
         elif not contenttype.startswith("text/plain"):
             print("PUT/GET to {}: UNEXPECTED CONTENT TYPE: {}".format(node, contenttype))
         elif status in range(200,300) and returned != value:
@@ -199,6 +200,7 @@ def retrieve_from_different_nodes(nodes):
         get_node = random.choice(nodes)
 
         try:
+            print(f"PUTING {put_node}")
             put_value(put_node, key, value)
         except Exception as e:
             print("PUT/GET to {} / {}: EXCEPTION DURING PUT: {}".format(put_node, get_node, e))
@@ -210,6 +212,7 @@ def retrieve_from_different_nodes(nodes):
             continue
 
         if status in range(200,300) and returned == value:
+            print(f"PUT/GET to {put_node} {successes}: SUCCESS")
             successes+=1
         elif not contenttype.startswith("text/plain"):
             print("PUT/GET to {} / {}: UNEXPECTED CONTENT TYPE: {}".format(put_node, get_node, contenttype))
