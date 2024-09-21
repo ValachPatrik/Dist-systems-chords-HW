@@ -132,12 +132,13 @@ class ServerHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(response.encode())
         elif self.path == '/network':
-            response = json.dumps(list(set([
-                str(self.node_instance.succ),
-                str(self.node_instance.pred),
-            ] + [str(n) for n in self.node_instance.finger_table])))
+            response = json.dumps({
+                "successor": self.node_instance.succ,
+                "predecessor": self.node_instance.pred,
+                "finger_table": self.node_instance.finger_table
+            })
             self.send_response(200)
-            self.send_header("Content-type", "text/plain")
+            self.send_header("Content-type", "application/json")
             self.end_headers()
             self.wfile.write(response.encode())
         elif self.path == '/node':
