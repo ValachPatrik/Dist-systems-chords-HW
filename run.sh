@@ -30,7 +30,7 @@ for (( i=0; i<$NUM_REQUESTS; i++ )); do
     ssh -f $NODE "python3 $PWD/server.py $NODE $PORT $ADDRESSES_STR"
 done
 
-echo "${ADDRESSES[*]}"
+#echo "${ADDRESSES[*]}"
 #echo "Addresses ${ADDRESSES[0]} ${ADDRESSES[*]}"
 
 
@@ -38,4 +38,4 @@ for i in "${!ADDRESSES[@]}"; do
     ADDRESSES[$i]="\"${ADDRESSES[$i]}\""
 done
 
-#echo "[${ADDRESSES[*]}]" | sed 's/ /, /g'
+echo "[${ADDRESSES[*]}]" | sed 's/ /, /g'
