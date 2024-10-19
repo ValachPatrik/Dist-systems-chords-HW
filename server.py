@@ -6,6 +6,7 @@ import sys
 import threading
 import json
 import time
+import asyncio
 
 class Node:
     def __init__(self, node_name, node_port, initialization_list):
@@ -38,6 +39,7 @@ class Node:
         self.succ = self.hashed_map[self.hashed_list[(index + 1) % len(self.hashed_list)]]
 
     def setup_finger_table(self):
+        self.finger_table = []
         for i in range(self.M):
             start = (self.node_id + 2**i) % (2**self.M)
             #print(f"{self.node_port} finger_table[i={i}], {self.node_id} + {2**i} start: {start}, hashed_map: {self.hashed_map}")
@@ -120,11 +122,16 @@ class Node:
         conn = http.client.HTTPConnection(forward_host, int(forward_port))
         headers = {"Content-type": "text/plain"}
         body = f"{self.node_name}:{self.node_port},{nprime}"
+        print(f"network join forwards")
         conn.request("PUT", "/API/join", body=body, headers=headers)
         response = conn.getresponse()
         response_text = response.read().decode()
         if response.status == 200:
+            print("initializing with the response")
+            print(response_text)
             self.initialization_list = response_text.split(",")
+            self.initialization_list = [node for node in self.initialization_list if node] + [f"{self.node_name}:{self.node_port}"]
+            print(self.initialization_list)
             self.hashed_map = {self.hashing(node): node for node in self.initialization_list}
             self.hashed_list = sorted([self.hashing(node) for node in self.initialization_list])
             self.setup_succ_pred() 
@@ -134,20 +141,21 @@ class Node:
             self.hashed_list = []
         conn.close()
     
-    def network_accept(self, body):
+    async def network_accept(self, body):
         loner, nprime = body.split(",")
-        others = list(set([[self.pred, self.succ, f"{self.node_name}:{self.node_port}"] + [node for node in self.finger_table]]))
+        others = list(set([self.pred, self.succ, f"{self.node_name}:{self.node_port}"] + [node for node in self.finger_table]))
+        print(f"{self.node_name} {self.node_port}others {others}")
         if loner in others:
-            return []
+            return ""
         
         self.add_node(loner)
         
         network = [f"{self.node_name}:{self.node_port}"]
         for node in others:
             if self.is_between(self.node_id, self.hashing(node), self.hashing(nprime)):
-                conn = http.client.HTTPConnection(self.node_name, self.node_port)
+                conn = http.client.HTTPConnection(node.split(":")[0], node.split(":")[1])
                 headers = {"Content-type": "text/plain"}
-                body = f"{self.node_name}:{self.node_port},{nprime}"
+                body = f"{loner},{nprime}"
                 conn.request("PUT", "/API/join", body=body, headers=headers)
                 response = conn.getresponse()
                 response_text = response.read().decode()
@@ -167,15 +175,19 @@ class Node:
         return False
 
     def add_node(self, node):
+        print(f"adds node {node}")
         hashed_key = self.hashing(node)
         if self.is_between(self.hashing(self.pred), hashed_key, self.node_id):
             self.pred = node
+            print("changed pred")
         if self.is_between(self.node_id, hashed_key, self.hashing(self.succ)):
             self.succ = node
+            print("changed succ")
         for i in range(self.M):
             start = (self.node_id + 2**i) % (2**self.M)
-            if self.is_between(start, hashed_key, self.finger_table[i]):
+            if self.is_between(start, hashed_key, self.hashing(self.finger_table[i])):
                 self.finger_table[i] = node
+                print("changed finger")
                 
     def leave_network(self):
         self.pred = f"{self.node_name}:{self.node_port}"
@@ -190,14 +202,17 @@ class Node:
                 time.sleep(5)
             
     def look_for_crashes(self):
-        others = list(set([[self.pred, self.succ] + [node for node in self.finger_table]]))
+        others = list(set([self.pred, self.succ] + [node for node in self.finger_table]))
         for node in others:
             try:
                 conn = http.client.HTTPConnection(node.split(":")[0], int(node.split(":")[1]))
-                conn.request("GET", "/helloworld")
+                conn.request("GET", "/node-info")
                 response = conn.getresponse()
                 if response.status != 200:
                     raise Exception(f"Node {node} is not responding.")
+                data = json.loads(response.read().decode())
+                if data["successor"] == node:
+                    raise Exception(f"Node {node} is a loner.")
             except Exception as e:
                 self.remove_node(node)
             finally:
@@ -208,6 +223,21 @@ class Node:
             for i in range(self.M -1, -1, -1):
                 if self.finger_table[i] == node:
                     self.finger_table[i] = self.finger_table[(i+1) % self.M]
+                    while True:
+                        conn = http.client.HTTPConnection(self.finger_table[(i) % self.M].split(":")[0], int(self.finger_table[(i) % self.M].split(":")[1]))
+                        conn.request("GET", "/node")
+                        response = conn.getresponse()
+                        if response.status != 200:
+                            conn.close()
+                            break
+                        data = json.loads(response.read().decode())
+                        pred = data["predecessor"]
+                        if self.is_between(self.hashing(node), self.hashing(pred), self.hashing(self.finger_table[i])):
+                            self.finger_table[i] = pred
+                        else:
+                            conn.close()
+                            break
+                        conn.close()
         if node == self.succ:
             self.succ = self.finger_table[0]
             
@@ -305,16 +335,21 @@ class ServerHandler(SimpleHTTPRequestHandler):
                 try:
                     host, port = node.split(":")
                     conn = http.client.HTTPConnection(self.node_instance.node_name, int(self.node_instance.node_port))
-                    conn.request("PUT", f"/join?nprime={host}:{port}")
+                    print(node)
+                    conn.request("PUT", f"/join?nprime={host}:{port}")  
                     response = conn.getresponse()
-                    if response.status != 200:
-                        continue
+                    print(f"response {response}")
+                    if response.status == 200:
+                        conn.close()
+                        break
                 except Exception as e:
+                    conn.close()
                     continue
-                break
+                conn.close()
             else:
                 response = "Node has NOT recovered"
                 status = 500
+            conn.close()
             self.send_response(status)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
@@ -324,7 +359,7 @@ class ServerHandler(SimpleHTTPRequestHandler):
             self.send_response(500)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
-            self.wfile.write("Node has crashed".encode())
+            self.wfile.write("Node is crashed".encode())
             return
         if self.path.startswith('/storage/'):
             key = self.path[len('/storage/'):]
@@ -344,8 +379,7 @@ class ServerHandler(SimpleHTTPRequestHandler):
             if nprime:
                 # Logic to join the network specified by nprime
                 try:
-                    # Assuming join_network is a method in your Node class
-                    self.node_instance.join_network(nprime)
+                    self.node_instance.network_join(nprime)
                     response = "Joined network successfully"
                     status = 200
                 except Exception as e:
@@ -362,7 +396,7 @@ class ServerHandler(SimpleHTTPRequestHandler):
         elif self.path.startswith('/API/join'):
             content_length = int(self.headers['Content-Length'])
             body = self.rfile.read(content_length).decode('utf-8')
-            response = self.node_instance.accept_node(body)
+            response = asyncio.run(self.node_instance.network_accept(body))
             status = 200
             self.send_response(status)
             self.send_header("Content-type", "text/plain")
@@ -419,17 +453,24 @@ def main():
 
     def run_app():
         # start local server
-        if False:
+        if True:
             node_instance1 = Node("localhost", 65123, ["localhost:65123", "localhost:65124", "localhost:65125"])
             node_instance2 = Node("localhost", 65124, ["localhost:65123", "localhost:65124", "localhost:65125"])
             node_instance3 = Node("localhost", 65125, ["localhost:65123", "localhost:65124", "localhost:65125"])
+            node_instance0 = Node("localhost", 65126, ["localhost:65126"])
             threading.Thread(target=run_server, args=(65123, node_instance1)).start()
+            threading.Thread(target=node_instance1.periodic_stabilize, daemon=True).start()
             print("started 1")
             threading.Thread(target=run_server, args=(65124, node_instance2)).start()
+            threading.Thread(target=node_instance2.periodic_stabilize, daemon=True).start()
             print("started 2")
             threading.Thread(target=run_server, args=(65125, node_instance3)).start()
+            threading.Thread(target=node_instance3.periodic_stabilize, daemon=True).start()
             print("started 3")
-        if True:
+            threading.Thread(target=run_server, args=(65126, node_instance0)).start()
+            threading.Thread(target=node_instance0.periodic_stabilize, daemon=True).start()
+            print("started Lonely")
+        if False:
             node_instance = Node(node_name, node_port, initialization_list) 
             httpd = HTTPServer((node_name, node_port), lambda *args, **kwargs: ServerHandler(*args, node_instance=node_instance, **kwargs))
             httpd.serve_forever()
