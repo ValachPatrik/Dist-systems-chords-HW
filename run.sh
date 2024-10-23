@@ -25,14 +25,12 @@ for (( i=0; i<$NUM_REQUESTS; i++ )); do
     NODE_INDEX=$(( i % MAX_NODES ))
     NODE=${AVAILABLE_NODES[$NODE_INDEX]}
     PORT=${ADDRESSES[$i]#*:}
-    ssh $NODE "pip3 install flask" > /dev/null
-    ssh $NODE "pip3 install waitress" > /dev/null
-    ssh -f $NODE "python3 $PWD/server.py $NODE $PORT $ADDRESSES_STR"
+    ssh -f $NODE "python3 $PWD/server.py $NODE $PORT ${ADDRESSES[$i]}"
 done
 
 #echo "${ADDRESSES[*]}"
 #echo "Addresses ${ADDRESSES[0]} ${ADDRESSES[*]}"
-
+#echo "${ADDRESSES[*]}" | sed 's/ /,/g'
 
 for i in "${!ADDRESSES[@]}"; do
     ADDRESSES[$i]="\"${ADDRESSES[$i]}\""

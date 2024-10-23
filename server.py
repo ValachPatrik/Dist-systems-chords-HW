@@ -29,6 +29,11 @@ class Node:
         self.initialization_list = []  # Drop the list after organizing the ring and table
         self.hashed_map = {}
         self.hashed_list = []
+        
+        self.loop_prevent = []
+        self.loop_prevent_reset_period = 0
+        self.stabilization_period = 5
+        
 
     def hashing(self, key):
         return int(hashlib.sha1(key.encode()).hexdigest(), 16) % (2 ** self.M)
@@ -122,16 +127,16 @@ class Node:
         conn = http.client.HTTPConnection(forward_host, int(forward_port))
         headers = {"Content-type": "text/plain"}
         body = f"{self.node_name}:{self.node_port},{nprime}"
-        print(f"network join forwards")
+        #print(f"network join forwards")
         conn.request("PUT", "/API/join", body=body, headers=headers)
         response = conn.getresponse()
         response_text = response.read().decode()
         if response.status == 200:
-            print("initializing with the response")
-            print(response_text)
+            #print("initializing with the response")
+            #print(response_text)
             self.initialization_list = response_text.split(",")
             self.initialization_list = [node for node in self.initialization_list if node] + [f"{self.node_name}:{self.node_port}"]
-            print(self.initialization_list)
+            #print(self.initialization_list)
             self.hashed_map = {self.hashing(node): node for node in self.initialization_list}
             self.hashed_list = sorted([self.hashing(node) for node in self.initialization_list])
             self.setup_succ_pred() 
@@ -144,11 +149,14 @@ class Node:
     async def network_accept(self, body):
         loner, nprime = body.split(",")
         others = list(set([self.pred, self.succ, f"{self.node_name}:{self.node_port}"] + [node for node in self.finger_table]))
-        print(f"{self.node_name} {self.node_port}others {others}")
+        #print(f"{self.node_name} {self.node_port}others {others}")
         if loner in others:
             return ""
+        if loner in self.loop_prevent:
+            return ""
         
-        self.add_node(loner)
+        if not self.add_node(loner):
+            self.loop_prevent.append(loner)
         
         network = [f"{self.node_name}:{self.node_port}"]
         for node in others:
@@ -175,20 +183,24 @@ class Node:
         return False
 
     def add_node(self, node):
-        print(f"adds node {node}")
+        #print(f"adds node {node}")
+        change = False
         hashed_key = self.hashing(node)
         if self.is_between(self.hashing(self.pred), hashed_key, self.node_id):
             self.pred = node
-            print("changed pred")
+            change = True
+            #print("changed pred")
         if self.is_between(self.node_id, hashed_key, self.hashing(self.succ)):
             self.succ = node
-            print("changed succ")
+            change = True
+            #print("changed succ")
         for i in range(self.M):
             start = (self.node_id + 2**i) % (2**self.M)
             if self.is_between(start, hashed_key, self.hashing(self.finger_table[i])):
                 self.finger_table[i] = node
-                print("changed finger")
-                
+                change = True
+                #print("changed finger")
+        return change
     def leave_network(self):
         self.pred = f"{self.node_name}:{self.node_port}"
         self.succ = f"{self.node_name}:{self.node_port}"
@@ -199,7 +211,11 @@ class Node:
         while True:
             if not self.crashed:
                 self.look_for_crashes()
-                time.sleep(5)
+                time.sleep(self.stabilization_period)
+                self.loop_prevent_reset_period += self.stabilization_period
+                if self.loop_prevent_reset_period > 30:
+                    self.loop_prevent_reset_period = 0
+                    self.loop_prevent = []
             
     def look_for_crashes(self):
         others = list(set([self.pred, self.succ] + [node for node in self.finger_table]))
@@ -330,13 +346,13 @@ class ServerHandler(SimpleHTTPRequestHandler):
         if self.path.startswith('/sim-recover'):
             self.node_instance.crashed = False
             response = "Node has recovered"
-            print("recovering")
+            #print("recovering")
             def recover_node():
                 others = list(set([self.node_instance.pred, self.node_instance.succ] + self.node_instance.finger_table))
                 others.remove(f"{self.node_instance.node_name}:{self.node_instance.node_port}")  # Remove self from others
                 for node in others:
                     try:
-                        print(node)
+                        #print(node)
                         try:
                             self.node_instance.network_join(node)
                             response = "Joined network successfully"
@@ -345,7 +361,7 @@ class ServerHandler(SimpleHTTPRequestHandler):
                             response = f"Failed to join network: {e}"
                             status = 500
                         if status == 200:
-                            print("status 200")
+                            #print("status 200")
                             break
                     except Exception as e:
                         continue
@@ -378,7 +394,7 @@ class ServerHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(response.encode())
         elif self.path.startswith('/join'):
-            print("joining")
+            #print("joining")
             # Parse the nprime parameter from the URL
             query = self.path.split('?')[1]
             params = dict(qc.split('=') for qc in query.split('&'))
@@ -461,7 +477,7 @@ def main():
 
     def run_app():
         # start local server
-        if True:
+        if False:
             node_instance1 = Node("localhost", 65123, ["localhost:65123", "localhost:65124", "localhost:65125"])
             node_instance2 = Node("localhost", 65124, ["localhost:65123", "localhost:65124", "localhost:65125"])
             node_instance3 = Node("localhost", 65125, ["localhost:65123", "localhost:65124", "localhost:65125"])
@@ -478,7 +494,7 @@ def main():
             threading.Thread(target=run_server, args=(65126, node_instance0)).start()
             threading.Thread(target=node_instance0.periodic_stabilize, daemon=True).start()
             print("started Lonely")
-        if False:
+        if True:
             node_instance = Node(node_name, node_port, initialization_list) 
             httpd = HTTPServer((node_name, node_port), lambda *args, **kwargs: ServerHandler(*args, node_instance=node_instance, **kwargs))
             httpd.serve_forever()
