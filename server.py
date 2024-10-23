@@ -330,30 +330,37 @@ class ServerHandler(SimpleHTTPRequestHandler):
         if self.path.startswith('/sim-recover'):
             self.node_instance.crashed = False
             response = "Node has recovered"
-            status = 200
-            for node in [self.node_instance.pred, self.node_instance.succ] + self.node_instance.finger_table:
-                try:
-                    host, port = node.split(":")
-                    conn = http.client.HTTPConnection(self.node_instance.node_name, int(self.node_instance.node_port))
-                    print(node)
-                    conn.request("PUT", f"/join?nprime={host}:{port}")  
-                    response = conn.getresponse()
-                    print(f"response {response}")
-                    if response.status == 200:
-                        conn.close()
-                        break
-                except Exception as e:
-                    conn.close()
-                    continue
-                conn.close()
-            else:
-                response = "Node has NOT recovered"
-                status = 500
-            conn.close()
-            self.send_response(status)
-            self.send_header("Content-type", "text/plain")
-            self.end_headers()
-            self.wfile.write(response.encode())
+            print("recovering")
+            def recover_node():
+                others = list(set([self.node_instance.pred, self.node_instance.succ] + self.node_instance.finger_table))
+                others.remove(f"{self.node_instance.node_name}:{self.node_instance.node_port}")  # Remove self from others
+                for node in others:
+                    try:
+                        print(node)
+                        try:
+                            self.node_instance.network_join(node)
+                            response = "Joined network successfully"
+                            status = 200
+                        except Exception as e:
+                            response = f"Failed to join network: {e}"
+                            status = 500
+                        if status == 200:
+                            print("status 200")
+                            break
+                    except Exception as e:
+                        continue
+                else:
+                    response = "Node has NOT recovered"
+                    status = 500
+                if len(others) == 0:
+                    response = "Node has recovered"
+                    status = 200
+                self.send_response(status)
+                self.send_header("Content-type", "text/plain")
+                self.end_headers()
+                self.wfile.write(response.encode())
+                return
+            recover_node()
             return
         if self.node_instance.crashed:
             self.send_response(500)
@@ -371,6 +378,7 @@ class ServerHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(response.encode())
         elif self.path.startswith('/join'):
+            print("joining")
             # Parse the nprime parameter from the URL
             query = self.path.split('?')[1]
             params = dict(qc.split('=') for qc in query.split('&'))
