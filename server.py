@@ -7,6 +7,22 @@ import threading
 import json
 import time
 import asyncio
+import contextlib
+import logging
+
+# Suppress HTTP server logging
+logging.getLogger("http.server").setLevel(logging.ERROR)  # {{ edit_1 }}
+
+@contextlib.contextmanager
+def suppress_output():
+    """Context manager to suppress stdout."""
+    with open(os.devnull, 'w') as fnull:
+        old_stdout = sys.stdout
+        sys.stdout = fnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
 
 class Node:
     def __init__(self, node_name, node_port, initialization_list):
@@ -32,7 +48,7 @@ class Node:
         
         self.loop_prevent = []
         self.loop_prevent_reset_period = 0
-        self.stabilization_period = 5
+        self.stabilization_period = 1
         
 
     def hashing(self, key):
@@ -210,8 +226,8 @@ class Node:
     def periodic_stabilize(self):
         while True:
             if not self.crashed:
-                self.look_for_crashes()
-                time.sleep(self.stabilization_period)
+                self.look_for_crashes()  # Await the asynchronous look_for_crashes
+                time.sleep(self.stabilization_period)  # Use asyncio.sleep instead of time.sleep
                 self.loop_prevent_reset_period += self.stabilization_period
                 if self.loop_prevent_reset_period > 30:
                     self.loop_prevent_reset_period = 0
@@ -248,7 +264,7 @@ class Node:
                             break
                         data = json.loads(response.read().decode())
                         pred = data["predecessor"]
-                        if self.is_between(self.hashing(node), self.hashing(pred), self.hashing(self.finger_table[i])):
+                        if self.is_between(self.hashing(node), self.hashing(pred), self.hashing(self.finger_table[i])) and pred != node:
                             self.finger_table[i] = pred
                         else:
                             conn.close()
@@ -345,11 +361,16 @@ class ServerHandler(SimpleHTTPRequestHandler):
     def do_PUT(self):
         if self.path.startswith('/sim-recover'):
             self.node_instance.crashed = False
+            self.node_instance.loop_prevent_reset_period = 0
+            self.node_instance.loop_prevent = []
             response = "Node has recovered"
             #print("recovering")
             def recover_node():
                 others = list(set([self.node_instance.pred, self.node_instance.succ] + self.node_instance.finger_table))
-                others.remove(f"{self.node_instance.node_name}:{self.node_instance.node_port}")  # Remove self from others
+                try:
+                    others.remove(f"{self.node_instance.node_name}:{self.node_instance.node_port}")  # Remove self from others
+                except Exception as e:
+                    pass
                 for node in others:
                     try:
                         #print(node)
@@ -420,7 +441,11 @@ class ServerHandler(SimpleHTTPRequestHandler):
         elif self.path.startswith('/API/join'):
             content_length = int(self.headers['Content-Length'])
             body = self.rfile.read(content_length).decode('utf-8')
-            response = asyncio.run(self.node_instance.network_accept(body))
+            
+            # Suppress output during the API call
+            with suppress_output():  # {{ edit_1 }}
+                response = asyncio.run(self.node_instance.network_accept(body))
+            
             status = 200
             self.send_response(status)
             self.send_header("Content-type", "text/plain")
@@ -430,6 +455,8 @@ class ServerHandler(SimpleHTTPRequestHandler):
             try:
                 # Reset the node to its initial state
                 self.node_instance.leave_network()
+                self.node_instance.loop_prevent_reset_period = 0
+                self.node_instance.loop_prevent = []
                 response = "Node has left the network successfully"
                 status = 200
             except Exception as e:
@@ -496,10 +523,9 @@ def main():
             print("started Lonely")
         if True:
             node_instance = Node(node_name, node_port, initialization_list) 
+            threading.Thread(target=node_instance.periodic_stabilize, daemon=False).start()
             httpd = HTTPServer((node_name, node_port), lambda *args, **kwargs: ServerHandler(*args, node_instance=node_instance, **kwargs))
             httpd.serve_forever()
-            
-            threading.Thread(target=node_instance.periodic_stabilize, daemon=True).start()
 
     threading.Thread(target=run_app).start()
     threading.Timer(600, lambda: os._exit(0)).start()  # Shutdown after 10 minutes
